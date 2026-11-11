@@ -1,100 +1,115 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { AlarmClock, AlignLeft, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, Clock3, Flame, FolderKanban, Leaf, MoreHorizontal, Pencil, Plus, Search, Sparkles, Sun, Target, Trash2, X } from 'lucide-react';
+import { AlarmClock, AlignLeft, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, Clock3, Flame, Flower2, FolderKanban, Leaf, MoreHorizontal, Pause, Pencil, Play, Plus, RotateCcw, Search, Sparkles, Sprout, Star, Sun, Target, Trash2, Trophy, X } from 'lucide-react';
 
 type Priority = 'عالية' | 'متوسطة' | 'منخفضة';
-type Task = { id: number; title: string; notes: string; category: string; dueDate: string; dueTime: string; priority: Priority; color: string; done: boolean };
-type Draft = Omit<Task, 'id' | 'done' | 'color'>;
+type Subtask = { id: string; title: string; done: boolean };
+type Task = { id: number; title: string; notes: string; category: string; dueDate: string; dueTime: string; priority: Priority; color: string; done: boolean; subtasks: Subtask[]; isGolden: boolean; completedAt?: string };
+type Draft = Pick<Task, 'title'|'notes'|'category'|'dueDate'|'dueTime'|'priority'|'subtasks'|'isGolden'>;
+type Reward = { id: number; title: string; goal: number; claimed: boolean };
+type Mood = 'مرهق'|'هادئ'|'متحمس';
+type Preferences = { mood: Mood; energy: number; rewards: Reward[] };
 const TASKS_STORAGE_KEY = 'yawmi.tasks.v1';
-const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
-const COLORS: Record<string,string> = { 'تعلّم وتطوير':'violet', 'مشروع':'coral', 'عناية بالنفس':'mint', 'تنظيم':'gold', 'شخصي':'violet', 'أخرى':'mint' };
-const PRIORITY_WEIGHT: Record<Priority,number> = { 'عالية':0, 'متوسطة':1, 'منخفضة':2 };
+const PREFS_STORAGE_KEY = 'yawmi.preferences.v1';
+const todayISO = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const COLORS: Record<string,string> = {'تعلّم وتطوير':'violet','مشروع':'coral','عناية بالنفس':'mint','تنظيم':'gold','شخصي':'violet','أخرى':'mint'};
+const PRIORITY_WEIGHT: Record<Priority,number> = {'عالية':0,'متوسطة':1,'منخفضة':2};
 const initialTasks: Task[] = [
-  { id: 1, title: 'مراجعة محاضرة قواعد البيانات', notes: 'التركيز على الفهارس والعلاقات، وتلخيص النقاط المهمة.', category: 'تعلّم وتطوير', dueDate: todayISO(), dueTime: '10:30', priority: 'عالية', color: 'violet', done: false },
-  { id: 2, title: 'إرسال ملف المشروع للفريق', notes: 'إرفاق آخر نسخة وملاحظات الاجتماع.', category: 'مشروع', dueDate: todayISO(), dueTime: '12:30', priority: 'عالية', color: 'coral', done: false },
-  { id: 3, title: 'مشي خفيف لمدة نصف ساعة', notes: '', category: 'عناية بالنفس', dueDate: todayISO(), dueTime: '17:00', priority: 'منخفضة', color: 'mint', done: false },
-  { id: 4, title: 'ترتيب خطة الأسبوع', notes: 'مراجعة المهام وتحديد أهم ثلاث أولويات.', category: 'تنظيم', dueDate: todayISO(), dueTime: '', priority: 'متوسطة', color: 'gold', done: true },
+  {id:1,title:'مراجعة محاضرة قواعد البيانات',notes:'التركيز على الفهارس والعلاقات، وتلخيص النقاط المهمة.',category:'تعلّم وتطوير',dueDate:todayISO(),dueTime:'10:30',priority:'عالية',color:'violet',done:false,subtasks:[{id:'s1',title:'قراءة المحاضرة',done:false},{id:'s2',title:'كتابة الملخص',done:false}],isGolden:true},
+  {id:2,title:'إرسال ملف المشروع للفريق',notes:'إرفاق آخر نسخة وملاحظات الاجتماع.',category:'مشروع',dueDate:todayISO(),dueTime:'12:30',priority:'عالية',color:'coral',done:false,subtasks:[],isGolden:false},
+  {id:3,title:'مشي خفيف لمدة نصف ساعة',notes:'',category:'عناية بالنفس',dueDate:todayISO(),dueTime:'17:00',priority:'منخفضة',color:'mint',done:false,subtasks:[],isGolden:false},
+  {id:4,title:'ترتيب خطة الأسبوع',notes:'مراجعة المهام وتحديد أهم ثلاث أولويات.',category:'تنظيم',dueDate:todayISO(),dueTime:'',priority:'متوسطة',color:'gold',done:true,subtasks:[],isGolden:false,completedAt:todayISO()},
 ];
-const blankDraft = (): Draft => ({ title:'', notes:'', category:'شخصي', dueDate:todayISO(), dueTime:'', priority:'متوسطة' });
+const defaultPrefs: Preferences = {mood:'هادئ',energy:3,rewards:[{id:1,title:'استراحة قهوة على رواق',goal:3,claimed:false}]};
+const blankDraft = (): Draft => ({title:'',notes:'',category:'شخصي',dueDate:todayISO(),dueTime:'',priority:'متوسطة',subtasks:[],isGolden:false});
 function loadTasks(): Task[] {
   try {
-    const raw = localStorage.getItem(TASKS_STORAGE_KEY);
-    if (!raw) return initialTasks;
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return initialTasks;
-    return parsed.map((item: any, index): Task => {
-      const category = typeof item.category === 'string' ? item.category : 'شخصي';
-      const oldTime = typeof item.time === 'string' ? item.time : '';
-      const priority: Priority = ['عالية','متوسطة','منخفضة'].includes(item.priority) ? item.priority : item.priority === 'عالية' || item.priority === 'مهمة اليوم' ? 'عالية' : item.priority === 'خفيفة' ? 'منخفضة' : 'متوسطة';
-      return { id: Number(item.id) || Date.now()+index, title: String(item.title || ''), notes: String(item.notes || ''), category, dueDate: typeof item.dueDate === 'string' ? item.dueDate : todayISO(), dueTime: typeof item.dueTime === 'string' ? item.dueTime : (/^\d{2}:\d{2}$/.test(oldTime) ? oldTime : ''), priority, color: COLORS[category] || item.color || 'violet', done: Boolean(item.done) };
-    }).filter(task => task.title.trim());
-  } catch (error) { console.warn('تعذر قراءة المهام المحفوظة', error); return initialTasks; }
+    const raw=localStorage.getItem(TASKS_STORAGE_KEY); if(!raw) return initialTasks;
+    const parsed: unknown=JSON.parse(raw); if(!Array.isArray(parsed)) return initialTasks;
+    return parsed.map((x:any,i):Task=>{
+      const category=typeof x.category==='string'?x.category:'شخصي';
+      const oldTime=typeof x.time==='string'?x.time:'';
+      const priority:Priority=['عالية','متوسطة','منخفضة'].includes(x.priority)?x.priority:x.priority==='مهمة اليوم'?'عالية':x.priority==='خفيفة'?'منخفضة':'متوسطة';
+      return {id:Number(x.id)||Date.now()+i,title:String(x.title||''),notes:String(x.notes||''),category,dueDate:typeof x.dueDate==='string'?x.dueDate:todayISO(),dueTime:typeof x.dueTime==='string'?x.dueTime:(/^\d{2}:\d{2}$/.test(oldTime)?oldTime:''),priority,color:COLORS[category]||x.color||'violet',done:Boolean(x.done),subtasks:Array.isArray(x.subtasks)?x.subtasks:[],isGolden:Boolean(x.isGolden),completedAt:typeof x.completedAt==='string'?x.completedAt:(x.done?todayISO():undefined)};
+    }).filter(t=>t.title.trim());
+  } catch(e){console.warn('تعذر قراءة المهام المحفوظة',e);return initialTasks;}
 }
-function formatDate(date: string) {
-  if (!date) return 'بدون موعد';
-  const d = new Date(`${date}T12:00:00`);
-  if (date === todayISO()) return 'اليوم';
-  return new Intl.DateTimeFormat('ar-PS', { day:'numeric', month:'short' }).format(d);
+function loadPrefs(): Preferences {
+  try {const raw=localStorage.getItem(PREFS_STORAGE_KEY);if(!raw)return defaultPrefs;const p=JSON.parse(raw);return {mood:['مرهق','هادئ','متحمس'].includes(p.mood)?p.mood:'هادئ',energy:Math.min(5,Math.max(1,Number(p.energy)||3)),rewards:Array.isArray(p.rewards)?p.rewards:defaultPrefs.rewards};} catch{return defaultPrefs;}
 }
-function App() {
-  const [tasks, setTasks] = useState<Task[]>(loadTasks);
-  const [activeNav, setActiveNav] = useState('اليوم');
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [draft, setDraft] = useState<Draft>(blankDraft());
-  const [query, setQuery] = useState('');
-  const [toast, setToast] = useState('');
-  useEffect(() => { try { localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks)); } catch (error) { console.warn('تعذر حفظ المهام', error); } }, [tasks]);
-  const today = todayISO();
-  const doneCount = tasks.filter(t => t.done).length;
-  const todayCount = tasks.filter(t => !t.done && (!t.dueDate || t.dueDate <= today)).length;
-  const laterCount = tasks.filter(t => !t.done && t.dueDate > today).length;
-  const visibleTasks = useMemo(() => tasks.filter(t => {
-    const matchesNav = activeNav === 'اليوم' ? !t.done && (!t.dueDate || t.dueDate <= today) : activeNav === 'لاحقًا' ? !t.done && t.dueDate > today : t.done;
-    const haystack = `${t.title} ${t.notes} ${t.category}`.toLocaleLowerCase();
-    return matchesNav && haystack.includes(query.trim().toLocaleLowerCase());
-  }).sort((a,b) => a.dueDate.localeCompare(b.dueDate) || (a.dueTime || '99:99').localeCompare(b.dueTime || '99:99') || PRIORITY_WEIGHT[a.priority]-PRIORITY_WEIGHT[b.priority]), [tasks, activeNav, today, query]);
-  const pct = tasks.length ? Math.round(doneCount / tasks.length * 100) : 0;
-  const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2300); };
-  const openNew = () => { setEditingId(null); setDraft(blankDraft()); setEditorOpen(true); };
-  const openEdit = (task: Task) => { const { title, notes, category, dueDate, dueTime, priority } = task; setEditingId(task.id); setDraft({title,notes,category,dueDate,dueTime,priority}); setEditorOpen(true); };
-  const toggleTask = (id: number) => setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
-  const removeTask = (id: number) => { setTasks(prev => prev.filter(t => t.id !== id)); flash('انحذفت المهمة'); };
-  const saveTask = (e: FormEvent) => {
-    e.preventDefault(); if (!draft.title.trim()) return;
-    if (editingId !== null) {
-      setTasks(prev => prev.map(t => t.id === editingId ? { ...t, ...draft, title:draft.title.trim(), color:COLORS[draft.category] || 'violet' } : t));
-      flash('انحفظت التعديلات تلقائيًا');
-    } else {
-      setTasks(prev => [{ id:Date.now(), ...draft, title:draft.title.trim(), color:COLORS[draft.category] || 'violet', done:false }, ...prev]);
-      flash('انضافت مهمتك للمشهد ✦');
-    }
-    setEditorOpen(false);
-  };
-  const heading = activeNav === 'اليوم' ? 'على رادارك اليوم' : activeNav === 'لاحقًا' ? 'مهامك القادمة' : 'أشياء أنجزتها';
-  const todayLabel = new Intl.DateTimeFormat('ar-PS', { weekday:'long', day:'numeric', month:'long', year:'numeric' }).format(new Date());
+function formatDate(date:string){if(!date)return 'بدون موعد';if(date===todayISO())return 'اليوم';return new Intl.DateTimeFormat('ar-PS',{day:'numeric',month:'short'}).format(new Date(`${date}T12:00:00`));}
+function App(){
+  const [tasks,setTasks]=useState<Task[]>(loadTasks);
+  const [prefs,setPrefs]=useState<Preferences>(loadPrefs);
+  const [activeNav,setActiveNav]=useState('اليوم');
+  const [editorOpen,setEditorOpen]=useState(false);
+  const [editingId,setEditingId]=useState<number|null>(null);
+  const [draft,setDraft]=useState<Draft>(blankDraft());
+  const [subtaskInput,setSubtaskInput]=useState('');
+  const [query,setQuery]=useState('');
+  const [toast,setToast]=useState('');
+  const [focusPreset,setFocusPreset]=useState(25);
+  const [secondsLeft,setSecondsLeft]=useState(25*60);
+  const [timerRunning,setTimerRunning]=useState(false);
+  const [rewardTitle,setRewardTitle]=useState('');
+  const [rewardGoal,setRewardGoal]=useState('3');
+  useEffect(()=>{try{localStorage.setItem(TASKS_STORAGE_KEY,JSON.stringify(tasks));}catch(e){console.warn('تعذر حفظ المهام',e);}},[tasks]);
+  useEffect(()=>{try{localStorage.setItem(PREFS_STORAGE_KEY,JSON.stringify(prefs));}catch(e){console.warn('تعذر حفظ التفضيلات',e);}},[prefs]);
+  useEffect(()=>{if(!timerRunning)return;const id=window.setInterval(()=>setSecondsLeft(s=>{if(s<=1){setTimerRunning(false);flash('خلصت جلسة التركيز! خذ استراحة قصيرة 🌿');return 0;}return s-1;}),1000);return()=>window.clearInterval(id);},[timerRunning]);
+  const today=todayISO();
+  const doneCount=tasks.filter(t=>t.done).length;
+  const doneToday=tasks.filter(t=>t.done&&t.completedAt===today).length;
+  const todayCount=tasks.filter(t=>!t.done&&(!t.dueDate||t.dueDate<=today)).length;
+  const laterCount=tasks.filter(t=>!t.done&&t.dueDate>today).length;
+  const visibleTasks=useMemo(()=>tasks.filter(t=>{
+    const matchNav=activeNav==='اليوم'?!t.done&&(!t.dueDate||t.dueDate<=today):activeNav==='لاحقًا'?!t.done&&t.dueDate>today:t.done;
+    return matchNav&&`${t.title} ${t.notes} ${t.category}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
+  }).sort((a,b)=>a.dueDate.localeCompare(b.dueDate)||(a.dueTime||'99:99').localeCompare(b.dueTime||'99:99')||PRIORITY_WEIGHT[a.priority]-PRIORITY_WEIGHT[b.priority]),[tasks,activeNav,today,query]);
+  const pct=tasks.length?Math.round(doneCount/tasks.length*100):0;
+  function flash(msg:string){setToast(msg);window.setTimeout(()=>setToast(''),2300);}
+  function openNew(){setEditingId(null);setDraft(blankDraft());setSubtaskInput('');setEditorOpen(true);}
+  function openEdit(t:Task){setEditingId(t.id);setDraft({title:t.title,notes:t.notes,category:t.category,dueDate:t.dueDate,dueTime:t.dueTime,priority:t.priority,subtasks:t.subtasks||[],isGolden:t.isGolden});setSubtaskInput('');setEditorOpen(true);}
+  function saveTask(e:FormEvent){e.preventDefault();if(!draft.title.trim())return;setTasks(prev=>{if(editingId!==null)return prev.map(t=>t.id===editingId?{...t,...draft,title:draft.title.trim(),color:COLORS[draft.category]||'violet'}:draft.isGolden?{...t,isGolden:false}:t);const next={id:Date.now(),...draft,title:draft.title.trim(),color:COLORS[draft.category]||'violet',done:false};return [...prev.map(t=>draft.isGolden?{...t,isGolden:false}:t),next];});flash(editingId!==null?'انحفظت تعديلاتك':'انضافت المهمة');setEditorOpen(false);}
+  function toggleTask(id:number){setTasks(prev=>prev.map(t=>t.id===id?{...t,done:!t.done,completedAt:!t.done?todayISO():undefined}:t));}
+  function removeTask(id:number){setTasks(prev=>prev.filter(t=>t.id!==id));flash('انحذفت المهمة');}
+  function setGolden(id:number){setTasks(prev=>prev.map(t=>({...t,isGolden:t.id===id?!t.isGolden:false})));}
+  function toggleSubtask(taskId:number,subtaskId:string){setTasks(prev=>prev.map(t=>t.id===taskId?{...t,subtasks:t.subtasks.map(s=>s.id===subtaskId?{...s,done:!s.done}:s)}:t));}
+  function addDraftSubtask(){const title=subtaskInput.trim();if(!title)return;setDraft(d=>({...d,subtasks:[...d.subtasks,{id:`${Date.now()}-${Math.random()}`,title,done:false}]}));setSubtaskInput('');}
+  function addReward(e:FormEvent){e.preventDefault();if(!rewardTitle.trim())return;const goal=Math.max(1,Number(rewardGoal)||1);setPrefs(p=>({...p,rewards:[...p.rewards,{id:Date.now(),title:rewardTitle.trim(),goal,claimed:false}]}));setRewardTitle('');flash('انضافت مكافأتك');}
+  function claimReward(id:number){setPrefs(p=>({...p,rewards:p.rewards.map(r=>r.id===id?{...r,claimed:true}:r)}));flash('تستاهل مكافأتك! 🎉');}
+  function resetReward(id:number){setPrefs(p=>({...p,rewards:p.rewards.map(r=>r.id===id?{...r,claimed:false}:r)}));}
+  function changeFocusPreset(minutes:number){setFocusPreset(minutes);setSecondsLeft(minutes*60);setTimerRunning(false);}
+  function resetTimer(){setTimerRunning(false);setSecondsLeft(focusPreset*60);}
+  const timeText=`${String(Math.floor(secondsLeft/60)).padStart(2,'0')}:${String(secondsLeft%60).padStart(2,'0')}`;
+  const todayLabel=new Intl.DateTimeFormat('ar-PS',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date());
+  const completedDates=new Set(tasks.filter(t=>t.done&&t.completedAt).map(t=>t.completedAt!));
+  let streak=0;for(let i=0;i<30;i++){const d=new Date();d.setDate(d.getDate()-i);const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;if(completedDates.has(key))streak++;else if(i>0)break;}
+  const historyDays=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(6-i));const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;return {key,label:new Intl.DateTimeFormat('ar-PS',{weekday:'short'}).format(d),count:tasks.filter(t=>t.done&&t.completedAt===key).length};});
+  const gardenStage=doneCount===0?0:doneCount<3?1:doneCount<7?2:doneCount<15?3:4;
+  const moodHint=prefs.energy<=2?'اختار مهمة خفيفة وخذها بهدوء.':prefs.mood==='متحمس'?'طاقتك عالية؛ وقت مناسب للمهمة الذهبية.':'اختار خطوة واضحة وابدأ فيها.';
+  const heading=activeNav==='اليوم'?'على رادارك اليوم':activeNav==='لاحقًا'?'مهامك القادمة':'أشياء أنجزتها';
   return <div className="app-shell">
-    <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><Sparkles size={20}/></div><div><strong>يومي</strong><span>مساحة إنجازك اليومية</span></div></div><div className="side-sep"/><div className="nav-label">مساحتك</div>
-      <nav className="nav-list">
-        <button className={activeNav==='اليوم'?'nav-item active':'nav-item'} onClick={()=>setActiveNav('اليوم')}><Sun/><span>اليوم</span><b>{String(todayCount).padStart(2,'٠')}</b></button>
-        <button className={activeNav==='لاحقًا'?'nav-item active':'nav-item'} onClick={()=>setActiveNav('لاحقًا')}><Clock3/><span>لاحقًا</span><b>{String(laterCount).padStart(2,'٠')}</b></button>
-        <button className={activeNav==='اكتملت'?'nav-item active':'nav-item'} onClick={()=>setActiveNav('اكتملت')}><CheckCheck/><span>اكتملت</span><b>{String(doneCount).padStart(2,'٠')}</b></button>
-      </nav>
-      <button className="new-task-side" onClick={openNew}><Plus size={18}/> مهمة جديدة</button>
-      <div className="sidebar-bottom"><div className="focus-note"><div className="note-kicker"><Sparkles size={14}/> لحظة تركيز</div><strong>خذها خطوة خطوة</strong><p>إنجاز صغير اليوم، فرق كبير بكرا.</p><div className="note-decoration"><Leaf size={52}/></div></div><div className="profile"><div className="avatar">ف</div><div><strong>فؤاد</strong><span>مساحتي الشخصية</span></div><MoreHorizontal size={18}/></div></div>
-    </aside>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark"><Sparkles size={20}/></div><div><strong>يومي</strong><span>مساحة إنجازك اليومية</span></div></div><div className="side-sep"/><div className="nav-label">مساحتك</div><nav className="nav-list">
+      <button className={activeNav==='اليوم'?'nav-item active':'nav-item'} onClick={()=>setActiveNav('اليوم')}><Sun/><span>اليوم</span><b>{String(todayCount).padStart(2,'٠')}</b></button>
+      <button className={activeNav==='لاحقًا'?'nav-item active':'nav-item'} onClick={()=>setActiveNav('لاحقًا')}><Clock3/><span>لاحقًا</span><b>{String(laterCount).padStart(2,'٠')}</b></button>
+      <button className={activeNav==='اكتملت'?'nav-item active':'nav-item'} onClick={()=>setActiveNav('اكتملت')}><CheckCheck/><span>اكتملت</span><b>{String(doneCount).padStart(2,'٠')}</b></button>
+    </nav><button className="new-task-side" onClick={openNew}><Plus size={18}/> مهمة جديدة</button><div className="sidebar-bottom"><div className="focus-note"><div className="note-kicker"><Sparkles size={14}/> لحظة تركيز</div><strong>خذها خطوة خطوة</strong><p>إنجاز صغير اليوم، فرق كبير بكرا.</p><div className="note-decoration"><Leaf size={52}/></div></div><div className="profile"><div className="avatar">ف</div><div><strong>فؤاد</strong><span>مساحتي الشخصية</span></div><MoreHorizontal size={18}/></div></div></aside>
     <main className="main-area">
       <header className="topbar"><div className="date-line"><span className="date-dot"/> {todayLabel} <ChevronDown size={14}/></div><div className="top-actions"><span className="offline-pill"><i/> حفظ تلقائي على جهازك</span><button className="icon-btn" aria-label="بحث" onClick={()=>document.getElementById('task-search')?.focus()}><Search size={17}/></button><div className="mini-avatar">ف</div></div></header>
-      <section className="welcome-row"><div><div className="eyebrow"><span/> يوم جديد، فرصة جديدة</div><h1>{activeNav==='اليوم'?'مساحتك اليوم':activeNav==='لاحقًا'?'خطط للخطوة الجاية':'إنجازاتك تستاهل' } <span className="star-sparkle">✦</span></h1><p>خلّي إنجازك يحكي. ابدأ بمهمة واحدة، والباقي بيجي.</p></div><div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="hero-orb"><Sparkles size={30}/></div><span className="float-dot dot-a"/><span className="float-dot dot-b"/><span className="float-dot dot-c"/></div></section>
-      <section className="overview-grid"><article className="progress-panel"><div className="panel-top"><div className="panel-label"><span className="tiny-icon violet-icon"><Target size={16}/></span> تقدمك الكلي</div><button className="more-button" title="نسبة المهام المكتملة"><MoreHorizontal size={18}/></button></div><div className="progress-main"><div className="progress-number">{String(doneCount).padStart(2,'٠')}<small>/{String(tasks.length).padStart(2,'٠')}</small></div><div className="progress-copy"><strong>كل خطوة بتنحسب</strong><span>أنجزت {doneCount} من {tasks.length} مهامك</span></div><div className="ring" style={{'--progress':`${pct*3.6}deg`} as React.CSSProperties}><div><strong>{pct}<small>%</small></strong></div></div></div><div className="progress-track"><span style={{width:`${pct}%`}}/></div><div className="progress-foot"><span>بداية حلوة، كمّل على راحتك ✨</span><span>{pct}%</span></div></article>
-        <article className="streak-panel"><div className="streak-glow"/><div className="streak-head"><span className="streak-icon"><Flame size={19}/></span><span>تنظيم يومك</span><MoreHorizontal size={18}/></div><div className="streak-number">{todayCount} <small>مهام متبقية اليوم</small></div><p>قسّم يومك إلى خطوات صغيرة وواضحة.</p><div className="streak-days">{['ث','أ','ن','ث','ج','س','ح'].map((d,i)=><div className={i<3?'day done-day':'day'} key={i}><span>{d}</span><i>{i<3?<Check size={12}/>:''}</i></div>)}</div></article></section>
-      <section className="tasks-section"><div className="section-heading"><div><div className="heading-title">{heading}<span className="task-count">{visibleTasks.length}</span></div><div className="heading-sub">رتّب يومك على إيقاعك الخاص</div></div><div className="section-tools"><div className="search-box"><Search size={15}/><input id="task-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="ابحث بالاسم أو التفاصيل..."/></div><button className="add-button" onClick={openNew}><Plus size={17}/> أضف للمشهد</button></div></div>
-        {visibleTasks.length ? <div className="task-grid">{visibleTasks.map(task=><article key={task.id} className={`task-card ${task.done?'task-done':''} ${task.color}`}><div className="task-card-top"><span className="category-icon"><FolderKanban size={15}/></span><span className="category-name">{task.category}</span><button className="task-action edit-action" onClick={()=>openEdit(task)} title="تعديل المهمة" aria-label="تعديل المهمة"><Pencil size={14}/></button><button className="task-action delete-action" onClick={()=>removeTask(task.id)} title="حذف المهمة" aria-label="حذف المهمة"><Trash2 size={14}/></button></div><h3>{task.title}</h3>{task.notes&&<p className="task-notes"><AlignLeft size={12}/><span>{task.notes}</span></p>}<div className="task-meta"><button className={`task-check ${task.done?'checked':''}`} onClick={()=>toggleTask(task.id)} aria-label={task.done?'إلغاء الإنجاز':'إنجاز المهمة'}>{task.done&&<Check size={14}/>}</button><span className="task-time"><CalendarDays size={13}/>{formatDate(task.dueDate)}</span>{task.dueTime&&<span className="task-time"><AlarmClock size={13}/>{task.dueTime}</span>}<span className={`task-priority priority-${task.priority==='عالية'?'high':task.priority==='متوسطة'?'medium':'low'}`}>{task.priority}</span></div><div className="task-accent"/></article>)}</div> : <div className="empty-state"><span>✧</span><strong>{query?'ما لقينا مهام مطابقة':'ما في مهام بهذا القسم'}</strong><p>{query?'جرّب كلمة بحث ثانية.':'أضف مهمة وحدد موعدها وأولويتها وتفاصيلها.'}</p><button onClick={openNew}><Plus size={16}/> أضف مهمة</button></div>}
+      <section className="welcome-row"><div><div className="eyebrow"><span/> يوم جديد، فرصة جديدة</div><h1>{activeNav==='اليوم'?'مساحتك اليوم':activeNav==='لاحقًا'?'خطط للخطوة الجاية':'إنجازاتك تستاهل'} <span className="star-sparkle">✦</span></h1><p>خلّي إنجازك يحكي. ابدأ بمهمة واحدة، والباقي بيجي.</p></div><div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="hero-orb"><Sparkles size={30}/></div><span className="float-dot dot-a"/><span className="float-dot dot-b"/><span className="float-dot dot-c"/></div></section>
+      <section className="overview-grid"><article className="progress-panel"><div className="panel-top"><div className="panel-label"><span className="tiny-icon violet-icon"><Target size={16}/></span> تقدمك الكلي</div><button className="more-button" title="نسبة المهام المكتملة"><MoreHorizontal size={18}/></button></div><div className="progress-main"><div className="progress-number">{String(doneCount).padStart(2,'٠')}<small>/{String(tasks.length).padStart(2,'٠')}</small></div><div className="progress-copy"><strong>كل خطوة بتنحسب</strong><span>أنجزت {doneCount} من {tasks.length} مهامك</span></div><div className="ring" style={{'--progress':`${pct*3.6}deg`} as React.CSSProperties}><div><strong>{pct}<small>%</small></strong></div></div></div><div className="progress-track"><span style={{width:`${pct}%`}}/></div><div className="progress-foot"><span>بداية حلوة، كمّل على راحتك ✨</span><span>{pct}%</span></div></article><article className="streak-panel"><div className="streak-glow"/><div className="streak-head"><span className="streak-icon"><Flame size={19}/></span><span>سلسلة إنجازك</span><MoreHorizontal size={18}/></div><div className="streak-number">{streak} <small>أيام متتالية</small></div><p>{streak?'حافظ على إيقاعك الجميل!':'أول إنجاز بيفتح السلسلة.'}</p><div className="streak-days">{historyDays.map(d=><div className={d.count?'day done-day':'day'} key={d.key}><span>{d.label}</span><i>{d.count?<Check size={12}/>:''}</i></div>)}</div></article></section>
+      <section className="creative-grid">
+        <article className="garden-panel"><div className="feature-title"><span className="feature-icon garden-icon"><Flower2 size={17}/></span><div><strong>مساحتك تنمو</strong><small>كل إنجاز يضيف حياة لحديقتك</small></div><span className="garden-level">المستوى {gardenStage+1}</span></div><div className={`garden-scene garden-stage-${gardenStage}`}><div className="garden-sun"/><div className="garden-cloud">☁</div><div className="garden-ground"/><div className="garden-plants">{Array.from({length:Math.max(1,Math.min(7,doneCount+1))},(_,i)=><span key={i} style={{'--plant-index':i} as React.CSSProperties}>{i%3===0?'🌷':i%3===1?'🌿':'🌼'}</span>)}</div><div className="garden-caption">{gardenStage===0?'ازرع أول إنجاز':gardenStage===1?'براعمك بدأت تظهر':gardenStage===2?'حديقتك صارت أوسع':gardenStage===3?'مساحتك مليانة حياة':'وصلت لحديقة مزهرة!'}</div></div><div className="garden-foot"><Sprout size={14}/><span>أنجزت {doneCount} مهمة بالمجموع</span><span className="garden-next">{gardenStage<4?`${[1,3,7,15,15][gardenStage]-doneCount} للمستوى التالي`: 'مستوى مكتمل'}</span></div></article>
+        <article className="focus-panel"><div className="feature-title"><span className="feature-icon focus-icon"><Target size={17}/></span><div><strong>جلسة تركيز</strong><small>خذ وقتك، خطوة بخطوة</small></div></div><div className="timer-display">{timeText}</div><div className="timer-presets">{[25,50].map(m=><button key={m} className={focusPreset===m?'selected':''} disabled={timerRunning} onClick={()=>changeFocusPreset(m)}>{m} دقيقة</button>)}</div><div className="timer-controls"><button className="timer-start" onClick={()=>{if(secondsLeft===0)setSecondsLeft(focusPreset*60);setTimerRunning(!timerRunning);}}>{timerRunning?<><Pause size={15}/> إيقاف مؤقت</>:<><Play size={15}/> ابدأ التركيز</>}</button><button className="timer-reset" onClick={resetTimer} title="إعادة ضبط المؤقت"><RotateCcw size={16}/></button></div></article>
+        <article className="mood-panel"><div className="feature-title"><span className="feature-icon mood-icon"><Sparkles size={17}/></span><div><strong>كيف طاقتك اليوم؟</strong><small>اختار إحساسك، ونظبط الإيقاع</small></div></div><div className="mood-options">{([['مرهق','😮‍💨'],['هادئ','🙂'],['متحمس','⚡']] as [Mood,string][]).map(([m,emoji])=><button key={m} className={prefs.mood===m?'mood-choice chosen':'mood-choice'} onClick={()=>setPrefs(p=>({...p,mood:m}))}><span>{emoji}</span>{m}</button>)}</div><div className="energy-row"><span>مستوى الطاقة</span><div>{[1,2,3,4,5].map(n=><button key={n} aria-label={`طاقة ${n}`} className={prefs.energy>=n?'energy-dot filled':'energy-dot'} onClick={()=>setPrefs(p=>({...p,energy:n}))}/>)}</div></div><p className="mood-hint">{moodHint}</p></article>
       </section>
-      <section className="bottom-grid"><article className="quote-card"><div className="quote-spark">✦</div><div><span>تذكير لطيف</span><strong>مش لازم تخلص كل شي اليوم.<br/>المهم تبدأ.</strong><small>مساحتك، إيقاعك.</small></div><div className="quote-blob"/></article><article className="week-card"><div className="week-head"><strong>هذا الأسبوع</strong><div><button aria-label="الأسبوع السابق"><ChevronRight size={15}/></button><button aria-label="الأسبوع التالي"><ChevronLeft size={15}/></button></div></div><div className="week-days">{['ث','أ','ن','ث','ج','س','ح'].map((d,i)=><div key={i} className={i===6?'week-day today':'week-day'}><span>{d}</span><strong>{['٣','٤','٥','٦','٧','٨','٩'][i]}</strong>{[0,2,4].includes(i)&&<i/>}</div>)}</div></article></section>
-      <footer className="footer-line"><span>يومي <span className="footer-star">✦</span> مساحة صغيرة لحياة أهدى</span><span>مهامك محفوظة على جهازك <span className="version-dot"/></span></footer>
+      <section className="tasks-section"><div className="section-heading"><div><div className="heading-title">{heading}<span className="task-count">{visibleTasks.length}</span></div><div className="heading-sub">رتّب يومك على إيقاعك الخاص</div></div><div className="section-tools"><div className="search-box"><Search size={15}/><input id="task-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="ابحث بالاسم أو التفاصيل..."/></div><button className="add-button" onClick={openNew}><Plus size={17}/> أضف للمشهد</button></div></div>
+        {visibleTasks.length?<div className="task-grid">{visibleTasks.map(task=><article key={task.id} className={`task-card ${task.done?'task-done':''} ${task.color} ${task.isGolden?'golden-task':''}`}><div className="task-card-top"><span className="category-icon"><FolderKanban size={15}/></span><span className="category-name">{task.category}</span><button className={task.isGolden?'task-action golden-action active':'task-action golden-action'} onClick={()=>setGolden(task.id)} title={task.isGolden?'إزالة المهمة الذهبية':'اجعلها المهمة الذهبية'} aria-label="تعيين المهمة الذهبية"><Star size={14} fill={task.isGolden?'currentColor':'none'}/></button><button className="task-action edit-action" onClick={()=>openEdit(task)} title="تعديل المهمة"><Pencil size={14}/></button><button className="task-action delete-action" onClick={()=>removeTask(task.id)} title="حذف المهمة"><Trash2 size={14}/></button></div><h3>{task.isGolden&&<span className="golden-label">✦ الذهبية · </span>}{task.title}</h3>{task.notes&&<p className="task-notes"><AlignLeft size={12}/><span>{task.notes}</span></p>}{task.subtasks.length>0&&<div className="subtasks-preview">{task.subtasks.map(s=><button key={s.id} className={s.done?'subtask-line subtask-checked':'subtask-line'} onClick={()=>toggleSubtask(task.id,s.id)}><span>{s.done?<Check size={10}/>:''}</span>{s.title}</button>)}<small>{task.subtasks.filter(s=>s.done).length}/{task.subtasks.length} خطوات</small></div>}<div className="task-meta"><button className={task.done?'task-check checked':'task-check'} onClick={()=>toggleTask(task.id)} aria-label={task.done?'إلغاء الإنجاز':'إنجاز المهمة'}>{task.done&&<Check size={14}/>}</button><span className="task-time"><CalendarDays size={13}/>{formatDate(task.dueDate)}</span>{task.dueTime&&<span className="task-time"><AlarmClock size={13}/>{task.dueTime}</span>}<span className={`task-priority priority-${task.priority==='عالية'?'high':task.priority==='متوسطة'?'medium':'low'}`}>{task.priority}</span></div><div className="task-accent"/></article>)}</div>:<div className="empty-state"><span>✧</span><strong>{query?'ما لقينا مهام مطابقة':'ما في مهام بهذا القسم'}</strong><p>{query?'جرّب كلمة بحث ثانية.':'أضف مهمة وحدد موعدها وأولويتها وتفاصيلها.'}</p><button onClick={openNew}><Plus size={16}/> أضف مهمة</button></div>}
+      </section>
+      <section className="extra-grid"><article className="reward-panel"><div className="feature-title"><span className="feature-icon reward-icon"><Trophy size={17}/></span><div><strong>مكافآتك الصغيرة</strong><small>كل هدف منجز يستاهل احتفال</small></div></div><form className="reward-form" onSubmit={addReward}><input value={rewardTitle} onChange={e=>setRewardTitle(e.target.value)} placeholder="اكتب مكافأة لنفسك..." maxLength={60}/><input aria-label="عدد المهام لفتح المكافأة" type="number" min="1" max="100" value={rewardGoal} onChange={e=>setRewardGoal(e.target.value)}/><button type="submit" aria-label="إضافة مكافأة"><Plus size={16}/></button></form><div className="rewards-list">{prefs.rewards.map(r=><div className="reward-row" key={r.id}><div className="reward-info"><strong>{r.title}</strong><span>{doneToday} من {r.goal} مهام اليوم</span><div className="reward-track"><i style={{width:`${Math.min(100,doneToday/r.goal*100)}%`}}/></div></div>{r.claimed?<button className="reward-claimed" onClick={()=>resetReward(r.id)}>تمّت ✓</button>:<button className="reward-claim" disabled={doneToday<r.goal} onClick={()=>claimReward(r.id)}>{doneToday>=r.goal?'خذ مكافأتك':'باقي '+(r.goal-doneToday)}</button>}</div>)}{prefs.rewards.length===0&&<p className="no-rewards">أضف مكافأة تحبها بعد إنجاز عدد من المهام.</p>}</div></article>
+        <article className="history-panel"><div className="feature-title"><span className="feature-icon history-icon"><CalendarDays size={17}/></span><div><strong>أثر أسبوعك</strong><small>أيامك اللي صار فيها إنجاز</small></div></div><div className="history-chart">{historyDays.map(d=><div className="history-column" key={d.key}><span>{d.count||''}</span><i className={d.count?'has-done':''} style={{height:`${Math.max(8,Math.min(48,d.count*15))}px`}}/><small>{d.label}</small></div>)}</div><div className="history-summary"><span>أنجزت اليوم</span><strong>{doneToday} مهام</strong></div></article></section>
+      <footer className="footer-line"><span>يومي <span className="footer-star">✦</span> مساحة صغيرة لحياة أهدى</span><span>إنجازاتك محفوظة على جهازك <span className="version-dot"/></span></footer>
     </main>
-    {editorOpen&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setEditorOpen(false)}}><form className="task-modal task-editor" onSubmit={saveTask}><button type="button" className="modal-close" onClick={()=>setEditorOpen(false)}><X size={18}/></button><div className="modal-icon"><Sparkles size={20}/></div><div className="modal-kicker">{editingId!==null?'تعديل تفاصيل المهمة':'خطوة جديدة'}</div><h2>{editingId!==null?'عدّل مهمتك':'أضف للمشهد'}</h2><p>حدد التفاصيل والموعد، والتغييرات بتنحفظ تلقائيًا.</p><label>اسم المهمة<input autoFocus required maxLength={120} value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})} placeholder="مثال: أراجع ملاحظات المحاضرة"/></label><label>التفاصيل<textarea rows={3} maxLength={500} value={draft.notes} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="اكتب ملاحظات أو خطوات تساعدك تنجزها..."/></label><div className="form-two-cols"><label>التصنيف<select value={draft.category} onChange={e=>setDraft({...draft,category:e.target.value})}><option>شخصي</option><option>مشروع</option><option>تعلّم وتطوير</option><option>عناية بالنفس</option><option>تنظيم</option><option>أخرى</option></select></label><label>الأولوية<select value={draft.priority} onChange={e=>setDraft({...draft,priority:e.target.value as Priority})}><option value="عالية">عالية</option><option value="متوسطة">متوسطة</option><option value="منخفضة">منخفضة</option></select></label></div><div className="form-two-cols"><label>تاريخ الاستحقاق<input type="date" value={draft.dueDate} onChange={e=>setDraft({...draft,dueDate:e.target.value})}/></label><label>الوقت<input type="time" value={draft.dueTime} onChange={e=>setDraft({...draft,dueTime:e.target.value})}/></label></div><button className="modal-submit" type="submit"><Check size={17}/>{editingId!==null?'حفظ التعديلات':'أضف المهمة'}</button></form></div>}
+    {editorOpen&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setEditorOpen(false)}}><form className="task-modal task-editor" onSubmit={saveTask}><button type="button" className="modal-close" onClick={()=>setEditorOpen(false)}><X size={18}/></button><div className="modal-icon"><Sparkles size={20}/></div><div className="modal-kicker">{editingId!==null?'تعديل تفاصيل المهمة':'خطوة جديدة'}</div><h2>{editingId!==null?'عدّل مهمتك':'أضف للمشهد'}</h2><p>حدد التفاصيل والموعد، والتغييرات بتنحفظ تلقائيًا.</p><label>اسم المهمة<input autoFocus required maxLength={120} value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})} placeholder="مثال: أراجع ملاحظات المحاضرة"/></label><label>التفاصيل<textarea rows={3} maxLength={500} value={draft.notes} onChange={e=>setDraft({...draft,notes:e.target.value})} placeholder="اكتب ملاحظات أو خطوات تساعدك تنجزها..."/></label><div className="form-two-cols"><label>التصنيف<select value={draft.category} onChange={e=>setDraft({...draft,category:e.target.value})}><option>شخصي</option><option>مشروع</option><option>تعلّم وتطوير</option><option>عناية بالنفس</option><option>تنظيم</option><option>أخرى</option></select></label><label>الأولوية<select value={draft.priority} onChange={e=>setDraft({...draft,priority:e.target.value as Priority})}><option value="عالية">عالية</option><option value="متوسطة">متوسطة</option><option value="منخفضة">منخفضة</option></select></label></div><div className="form-two-cols"><label>تاريخ الاستحقاق<input type="date" value={draft.dueDate} onChange={e=>setDraft({...draft,dueDate:e.target.value})}/></label><label>الوقت<input type="time" value={draft.dueTime} onChange={e=>setDraft({...draft,dueTime:e.target.value})}/></label></div><div className="subtask-editor"><strong>خطوات المهمة</strong><div className="subtask-add-row"><input value={subtaskInput} onChange={e=>setSubtaskInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addDraftSubtask();}}} placeholder="أضف خطوة صغيرة..."/><button type="button" onClick={addDraftSubtask}><Plus size={15}/></button></div>{draft.subtasks.map(s=><div className="draft-subtask" key={s.id}><span>{s.title}</span><button type="button" onClick={()=>setDraft(d=>({...d,subtasks:d.subtasks.filter(x=>x.id!==s.id)}))}><X size={13}/></button></div>)}</div><label className="golden-toggle"><input type="checkbox" checked={draft.isGolden} onChange={e=>setDraft({...draft,isGolden:e.target.checked})}/><Star size={15}/> خليها المهمة الذهبية لليوم</label><button className="modal-submit" type="submit"><Check size={17}/>{editingId!==null?'حفظ التعديلات':'أضف المهمة'}</button></form></div>}
     {toast&&<div className="toast"><Check size={16}/>{toast}</div>}
   </div>;
 }
